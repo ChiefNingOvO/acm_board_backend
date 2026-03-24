@@ -1,6 +1,6 @@
 import sqlite3
 import os
-from fastapi import FastAPI, BackgroundTasks
+from fastapi import FastAPI, BackgroundTasks, HTTPException
 from contextlib import asynccontextmanager
 import uvicorn
 from dotenv import load_dotenv
@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from get_data_utils import get_pintia_submissions, get_problem_types, get_common_rankings
+from clear_db import clear_database
 
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -38,6 +39,18 @@ message_queue = []
 
 # 用于存储待发送给前端的广播消息列表
 broadcast_queue = []
+
+def reset_runtime_state():
+    global submissionId_set, student_passed_problems, first_blood, problem_label, user_info, id_info, message_queue, broadcast_queue
+
+    submissionId_set = set()
+    student_passed_problems = {}
+    first_blood = {chr(ord('A') + i): "-1" for i in range(12)}
+    problem_label = {}
+    user_info = {}
+    id_info = {}
+    message_queue = []
+    broadcast_queue = []
 
 def get_db_connection():
     conn = sqlite3.connect(DB_FILE)
@@ -397,6 +410,16 @@ def get_messages():
     messages = list(broadcast_queue)
     broadcast_queue.clear()
     return messages
+
+@app.post("/api/clear_db")
+def clear_db_api():
+    try:
+        clear_database(DB_FILE)
+        reset_runtime_state()
+        init_data()
+        return {"status": "success"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/admin", response_class=HTMLResponse)
 def admin_page():

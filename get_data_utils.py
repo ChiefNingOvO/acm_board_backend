@@ -86,7 +86,7 @@ def get_pintia_submissions():
             userId.append(item["userId"])
             status.append(item["status"])
             problemId.append(item["problemSetProblemId"])
-            judgeTime.append(item["judgeAt"])
+            judgeTime.append(item["submitAt"])
 
         cur_user_id, cur_user_name, cur_school_id = [], [], []
         student_users = data.get("studentUserById") or {}
