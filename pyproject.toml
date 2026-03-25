@@ -5,6 +5,7 @@ description = "Add your description here"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.135.1",
+    "kafka-python>=2.2.15",
     "requests>=2.32.5",
     "uvicorn[standard]>=0.42.0",
     "python-dotenv>=1.0.1",

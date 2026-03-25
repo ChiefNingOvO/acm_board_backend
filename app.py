@@ -1,12 +1,19 @@
+import asyncio
 import sqlite3
 import os
-from fastapi import FastAPI, BackgroundTasks, HTTPException
-from contextlib import asynccontextmanager
+import json
+import time
+from pathlib import Path
+from fastapi import FastAPI, HTTPException
+from contextlib import asynccontextmanager, suppress
 import uvicorn
 from dotenv import load_dotenv
+from kafka import KafkaProducer
 
 # 加载环境变量
-load_dotenv()
+BASE_DIR = Path(__file__).resolve().parent
+ENV_FILE = BASE_DIR / ".env"
+load_dotenv(ENV_FILE)
 
 from get_data_utils import get_pintia_submissions, get_problem_types, get_common_rankings
 from clear_db import clear_database
@@ -14,7 +21,33 @@ from clear_db import clear_database
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
-DB_FILE = os.getenv("DB_FILE", "acm_board.db")
+DB_FILE = Path(os.environ["DB_FILE"])
+if not DB_FILE.is_absolute():
+    DB_FILE = BASE_DIR / DB_FILE
+
+APP_HOST = os.environ["APP_HOST"]
+APP_PORT = int(os.environ["APP_PORT"])
+APP_RELOAD = os.environ["APP_RELOAD"].lower() == "true"
+APP_TITLE = os.environ["APP_TITLE"]
+APP_SOURCE_NAME = os.environ["APP_SOURCE_NAME"]
+ADMIN_HTML_FILE = os.environ["ADMIN_HTML_FILE"]
+KAFKA_BOOTSTRAP_SERVERS = [
+    server.strip()
+    for server in os.environ["KAFKA_BOOTSTRAP_SERVERS"].split(",")
+    if server.strip()
+]
+KAFKA_SUBMISSION_TOPIC = os.environ["KAFKA_SUBMISSION_TOPIC"]
+KAFKA_BROADCAST_TOPIC = os.environ["KAFKA_BROADCAST_TOPIC"]
+KAFKA_PRODUCER_ACKS = os.environ["KAFKA_PRODUCER_ACKS"]
+KAFKA_PRODUCER_RETRIES = int(os.environ["KAFKA_PRODUCER_RETRIES"])
+KAFKA_SEND_TIMEOUT_SECONDS = float(os.environ["KAFKA_SEND_TIMEOUT_SECONDS"])
+SUBMISSION_POLL_INTERVAL_SECONDS = float(os.environ["SUBMISSION_POLL_INTERVAL_SECONDS"])
+FIRST_BLOOD_PROBLEM_IDS = [
+    item.strip()
+    for item in os.environ["FIRST_BLOOD_PROBLEM_IDS"].split(",")
+    if item.strip()
+]
+FIRST_BLOOD_EMPTY_VALUE = os.environ["FIRST_BLOOD_EMPTY_VALUE"]
 
 # 提交记录集合
 submissionId_set = set()
@@ -23,7 +56,11 @@ submissionId_set = set()
 student_passed_problems = {}
 
 # 首刀记录，默认题号 A-L，-1 表示无人通过
-first_blood = {chr(ord('A') + i): "-1" for i in range(12)}
+def build_default_first_blood():
+    return {problem_id: FIRST_BLOOD_EMPTY_VALUE for problem_id in FIRST_BLOOD_PROBLEM_IDS}
+
+
+first_blood = build_default_first_blood()
 
 # 题目与标签字典
 problem_label = {}
@@ -39,13 +76,15 @@ message_queue = []
 
 # 用于存储待发送给前端的广播消息列表
 broadcast_queue = []
+submission_event_producer = None
+submission_poller_task = None
 
 def reset_runtime_state():
     global submissionId_set, student_passed_problems, first_blood, problem_label, user_info, id_info, message_queue, broadcast_queue
 
     submissionId_set = set()
     student_passed_problems = {}
-    first_blood = {chr(ord('A') + i): "-1" for i in range(12)}
+    first_blood = build_default_first_blood()
     problem_label = {}
     user_info = {}
     id_info = {}
@@ -56,6 +95,85 @@ def get_db_connection():
     conn = sqlite3.connect(DB_FILE)
     conn.row_factory = sqlite3.Row
     return conn
+
+
+def get_submission_event_producer():
+    global submission_event_producer
+
+    if submission_event_producer is None:
+        submission_event_producer = KafkaProducer(
+            bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
+            value_serializer=lambda value: json.dumps(value, ensure_ascii=False).encode("utf-8"),
+            key_serializer=lambda value: value.encode("utf-8") if value is not None else None,
+            acks=KAFKA_PRODUCER_ACKS,
+            retries=KAFKA_PRODUCER_RETRIES,
+        )
+
+    return submission_event_producer
+
+
+def close_submission_event_producer():
+    global submission_event_producer
+
+    if submission_event_producer is not None:
+        submission_event_producer.close()
+        submission_event_producer = None
+
+
+def publish_submission_events(messages: list[dict]):
+    if not messages:
+        return 0
+
+    producer = get_submission_event_producer()
+
+    for index, message in enumerate(messages):
+        event_type = message.get("type", "message")
+        event_key = message.get("event_key") or message.get("problem_id") or message.get("label") or f"event-{index}"
+        event_payload = {
+            "event_type": event_type,
+            "source": APP_SOURCE_NAME,
+            "payload": message,
+        }
+        producer.send(
+            KAFKA_SUBMISSION_TOPIC,
+            key=str(event_key),
+            value=event_payload,
+        ).get(timeout=KAFKA_SEND_TIMEOUT_SECONDS)
+
+    producer.flush()
+    return len(messages)
+
+
+def sync_latest_submissions_to_kafka():
+    global message_queue
+
+    print("[submission_poller] 正在拉取最新提交并发送到 Kafka...")
+    res = get_pintia_submissions()
+
+    if res is not None:
+        submission_ids, user_ids, statuses, problem_ids, judge_times, cur_user_id, cur_user_name, cur_school_id, student_nick_id, student_real_id = res
+
+        save_user_info(cur_user_id, cur_user_name, cur_school_id)
+        save_student_info(student_nick_id, student_real_id)
+
+        if submission_ids:
+            filter_data(submission_ids, user_ids, statuses, problem_ids, judge_times)
+
+    current_messages = list(message_queue)
+    published_count = publish_submission_events(current_messages)
+    message_queue.clear()
+    print(f"[submission_poller] 本轮完成，发送到 Kafka 的事件数: {published_count}")
+    return published_count
+
+
+async def submission_poller_loop():
+    while True:
+        try:
+            await asyncio.to_thread(sync_latest_submissions_to_kafka)
+        except Exception as e:
+            print(f"[submission_poller] 拉取或发送失败: {e}")
+
+        await asyncio.sleep(SUBMISSION_POLL_INTERVAL_SECONDS)
 
 def init_db():
     print("[init_db] 检查并初始化数据库表结构")
@@ -78,10 +196,22 @@ async def lifespan(app: FastAPI):
     print("[lifespan] 正在初始化数据...")
     init_data()
     print("[lifespan] 初始化完成！")
-    yield
+    global submission_poller_task
+    submission_poller_task = asyncio.create_task(submission_poller_loop())
+
+    try:
+        yield
+    finally:
+        if submission_poller_task is not None:
+            submission_poller_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await submission_poller_task
+            submission_poller_task = None
+
+        close_submission_event_producer()
 
 # FastAPI 应用实例
-app = FastAPI(title="ACM Show Submit API", lifespan=lifespan)
+app = FastAPI(title=APP_TITLE, lifespan=lifespan)
 
 def init_data():
     """
@@ -226,13 +356,13 @@ def handle_data(user_id: str, status: str, problem_id: str, judge_time: str):
                 conn.close()
                 
             # 处理首刀逻辑
-            handle_first_blood(user_id, problem_id)
+            handle_first_blood(user_id, problem_id, judge_time)
 
     # 无论状态如何都发送通知
     send_message(user_id, problem_id, status, judge_time)
 
 
-def handle_first_blood(user_id: str, problem_id: str):
+def handle_first_blood(user_id: str, problem_id: str, judge_time: str):
     """
     处理首刀（First Blood）逻辑
     """
@@ -248,7 +378,7 @@ def handle_first_blood(user_id: str, problem_id: str):
     user_id_str = f"{user_name} {school_id}"
 
     # 逻辑修复：如果该题目前没有人 AC（值为 "-1"），则当前用户夺得首刀
-    if first_blood.get(problem_id_label) == "-1":
+    if first_blood.get(problem_id_label) == FIRST_BLOOD_EMPTY_VALUE:
         first_blood[problem_id_label] = user_id_str
         
         conn = get_db_connection()
@@ -266,7 +396,9 @@ def handle_first_blood(user_id: str, problem_id: str):
             "type": "first_blood",
             "message": msg,
             "user_id": user_id_str,
-            "problem_id": problem_id_label
+            "problem_id": problem_id_label,
+            "judge_time": judge_time,
+            "event_key": f"first_blood:{problem_id_label}"
         })
 
 
@@ -290,10 +422,13 @@ def send_message(user_id: str, problem_id: str, status: str, judge_time: str):
     # 按前端要求，只保存包含 name, label, status 三个 key 的数据
     message_queue.append({
         "type": "message",
+        "user_id": mapped_user_id,
+        "problem_id": problem_id,
         "name": user_name,
         "label": label,
         "status": status,
-        "judge_time": judge_time
+        "judge_time": judge_time,
+        "event_key": f"submission:{mapped_user_id}:{problem_id}:{status}:{judge_time}"
     })
 
 
@@ -347,8 +482,7 @@ def save_student_info(student_nick_id, student_real_id):
             conn.close()
 
 
-@app.get("/api/get_latest_submission")
-def get_latest_submission():
+def get_latest_submission_once():
     """
     提供给前端的统一接口：
     调用时会主动拉取一次拼题啦最新数据进行处理。
@@ -371,15 +505,20 @@ def get_latest_submission():
                 filter_data(submission_ids, user_ids, statuses, problem_ids, judge_times)
 
         current_messages = list(message_queue)
-
+        published_count = publish_submission_events(current_messages)
         message_queue.clear()
 
-        return current_messages
+        return {
+            "status": "success",
+            "published_count": published_count,
+            "topic": KAFKA_SUBMISSION_TOPIC,
+            "bootstrap_servers": KAFKA_BOOTSTRAP_SERVERS,
+        }
 
     except Exception as e:
         print(f"[get_latest_submission] 获取或处理提交记录时发生错误：{str(e)}")
         # 出错时返回空列表以符合前端期望的数据结构
-        return []
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/get_rank_list")
 def get_rank_list():
@@ -393,16 +532,46 @@ def get_rank_list():
             })
     return rank_list
 
+
+@app.get("/api/get_first_blood")
+def get_first_blood_list():
+    result = []
+
+    for problem_id in sorted(first_blood.keys()):
+        result.append({
+            "problem_id": problem_id,
+            "user_id": first_blood[problem_id],
+        })
+
+    return result
+
 @app.get("/api/send_message")
 def send_message_api(content: str, duration: int):
-    global broadcast_queue
     msg = {
         "type": "broadcast",
         "content": content,
-        "duration": duration
+        "duration": duration,
+        "created_at": int(time.time() * 1000),
     }
-    broadcast_queue.append(msg)
-    return {"status": "success", "message": "Message added to queue"}
+    msg["event_key"] = f"broadcast:{msg['created_at']}"
+
+    producer = get_submission_event_producer()
+    producer.send(
+        KAFKA_BROADCAST_TOPIC,
+        key=msg["event_key"],
+        value={
+            "event_type": "broadcast",
+            "source": APP_SOURCE_NAME,
+            "payload": msg,
+        },
+    ).get(timeout=KAFKA_SEND_TIMEOUT_SECONDS)
+    producer.flush()
+
+    return {
+        "status": "success",
+        "topic": KAFKA_BROADCAST_TOPIC,
+        "event_key": msg["event_key"],
+    }
 
 @app.get("/api/get_messages")
 def get_messages():
@@ -423,8 +592,8 @@ def clear_db_api():
 
 @app.get("/admin", response_class=HTMLResponse)
 def admin_page():
-    with open("admin.html", "r", encoding="utf-8") as f:
+    with open(BASE_DIR / ADMIN_HTML_FILE, "r", encoding="utf-8") as f:
         return f.read()
 
 if __name__ == "__main__":
-    uvicorn.run("app:app", host="127.0.0.1", port=8090, reload=True)
+    uvicorn.run("app:app", host=APP_HOST, port=APP_PORT, reload=APP_RELOAD)

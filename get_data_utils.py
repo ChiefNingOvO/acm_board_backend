@@ -1,200 +1,222 @@
-import requests
 import json
 import os
+from pathlib import Path
+
+import requests
 from dotenv import load_dotenv
 
-# 加载环境变量
-load_dotenv()
+BASE_DIR = Path(__file__).resolve().parent
+load_dotenv(BASE_DIR / ".env")
 
-# ------------------------- 配置获取 --------------------------------------
+PTA_SUBMIT_URL = os.environ["PTA_SUBMIT_URL"]
+PTA_PROBLEM_URL = os.environ["PTA_PROBLEM_URL"]
+PTA_RANK_URL = os.environ["PTA_RANK_URL"]
 
-# PTA API URLs
-get_submit_url = os.getenv("PTA_SUBMIT_URL", "https://pintia.cn/api/problem-sets/1904101354045763584/submissions")
-get_problem_url = os.getenv("PTA_PROBLEM_URL", "https://pintia.cn/api/problem-sets/1904101354045763584/problem-types")
-get_rank_url = os.getenv("PTA_RANK_URL", "https://pintia.cn/api/problem-sets/1904101354045763584/common-rankings")
+PTA_COOKIE = os.environ["PTA_COOKIE"]
+PTA_X_LOLLIPOP = os.environ["PTA_X_LOLLIPOP"]
+PTA_X_MARSHMALLOW = os.environ["PTA_X_MARSHMALLOW"]
+PTA_ACCEPT = os.environ["PTA_ACCEPT"]
+PTA_ACCEPT_ENCODING = os.environ["PTA_ACCEPT_ENCODING"]
+PTA_ACCEPT_LANGUAGE = os.environ["PTA_ACCEPT_LANGUAGE"]
+PTA_CONTENT_TYPE = os.environ["PTA_CONTENT_TYPE"]
+PTA_PRIORITY = os.environ["PTA_PRIORITY"]
+PTA_REFERER_BASE_URL = os.environ["PTA_REFERER_BASE_URL"]
+PTA_SEC_CH_UA = os.environ["PTA_SEC_CH_UA"]
+PTA_SEC_CH_UA_MOBILE = os.environ["PTA_SEC_CH_UA_MOBILE"]
+PTA_SEC_CH_UA_PLATFORM = os.environ["PTA_SEC_CH_UA_PLATFORM"]
+PTA_SEC_FETCH_DEST = os.environ["PTA_SEC_FETCH_DEST"]
+PTA_SEC_FETCH_MODE = os.environ["PTA_SEC_FETCH_MODE"]
+PTA_SEC_FETCH_SITE = os.environ["PTA_SEC_FETCH_SITE"]
+PTA_USER_AGENT = os.environ["PTA_USER_AGENT"]
+PTA_SUBMISSIONS_REFERER_PATH = os.environ["PTA_SUBMISSIONS_REFERER_PATH"]
+PTA_RANKINGS_REFERER_PATH = os.environ["PTA_RANKINGS_REFERER_PATH"]
 
-# PTA Headers 配置项
-PTA_COOKIE = os.getenv("PTA_COOKIE", "")
-PTA_X_LOLLIPOP = os.getenv("PTA_X_LOLLIPOP", "62f9808e932ddf27c102c045a623fe6e")
+PTA_SUBMIT_LIMIT = int(os.environ["PTA_SUBMIT_LIMIT"])
+PTA_SUBMIT_FILTER = os.environ["PTA_SUBMIT_FILTER"]
+PTA_PROBLEM_PARAMS_JSON = os.environ["PTA_PROBLEM_PARAMS_JSON"]
+PTA_RANK_PAGE = int(os.environ["PTA_RANK_PAGE"])
+PTA_RANK_LIMIT = int(os.environ["PTA_RANK_LIMIT"])
+PTA_SUBMIT_TIMEOUT_SECONDS = float(os.environ["PTA_SUBMIT_TIMEOUT_SECONDS"])
+PTA_PROBLEM_TIMEOUT_SECONDS = float(os.environ["PTA_PROBLEM_TIMEOUT_SECONDS"])
+PTA_RANK_TIMEOUT_SECONDS = float(os.environ["PTA_RANK_TIMEOUT_SECONDS"])
+PTA_ALLOW_REDIRECTS = os.environ["PTA_ALLOW_REDIRECTS"].lower() == "true"
 
-def get_base_headers(referer_path="submissions"):
+
+def get_base_headers(referer_path: str) -> dict:
     return {
-        "accept": "application/json;charset=UTF-8",
-        "accept-encoding": "gzip, deflate, br, zstd",
-        "accept-language": "zh-CN",
-        "content-type": "application/json;charset=UTF-8",
+        "accept": PTA_ACCEPT,
+        "accept-encoding": PTA_ACCEPT_ENCODING,
+        "accept-language": PTA_ACCEPT_LANGUAGE,
+        "content-type": PTA_CONTENT_TYPE,
         "cookie": PTA_COOKIE,
-        "priority": "u=1, i",
-        "referer": f"https://pintia.cn/problem-sets/1904101354045763584/{referer_path}",
-        "sec-ch-ua": "\"Chromium\";v=\"146\", \"Not-A.Brand\";v=\"24\", \"Microsoft Edge\";v=\"146\"",
-        "sec-ch-ua-mobile": "?0",
-        "sec-ch-ua-platform": "\"Windows\"",
-        "sec-fetch-dest": "empty",
-        "sec-fetch-mode": "cors",
-        "sec-fetch-site": "same-origin",
-        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36 Edg/146.0.0.0",
+        "priority": PTA_PRIORITY,
+        "referer": f"{PTA_REFERER_BASE_URL}/{referer_path}",
+        "sec-ch-ua": PTA_SEC_CH_UA,
+        "sec-ch-ua-mobile": PTA_SEC_CH_UA_MOBILE,
+        "sec-ch-ua-platform": PTA_SEC_CH_UA_PLATFORM,
+        "sec-fetch-dest": PTA_SEC_FETCH_DEST,
+        "sec-fetch-mode": PTA_SEC_FETCH_MODE,
+        "sec-fetch-site": PTA_SEC_FETCH_SITE,
+        "user-agent": PTA_USER_AGENT,
         "x-lollipop": PTA_X_LOLLIPOP,
-        "x-marshmallow": ""
+        "x-marshmallow": PTA_X_MARSHMALLOW,
     }
 
-# ------------------------- 获取提交记录 --------------------------------------
+
+def get_submit_headers() -> dict:
+    return get_base_headers(PTA_SUBMISSIONS_REFERER_PATH)
+
+
+def get_problem_headers() -> dict:
+    return get_base_headers(PTA_SUBMISSIONS_REFERER_PATH)
+
+
+def get_rank_headers() -> dict:
+    return get_base_headers(PTA_RANKINGS_REFERER_PATH)
+
 
 get_submit_params = {
-    "limit": 1000, # 多少条数据
-    "filter": "{}"
+    "limit": PTA_SUBMIT_LIMIT,
+    "filter": PTA_SUBMIT_FILTER,
 }
 
-def get_submit_headers():
-    return get_base_headers("submissions")
-
-# ------------------------- 获取问题 --------------------------------------
-
-get_problem_params = {}
-
-def get_problem_headers():
-    return get_base_headers("submissions") # 沿用之前的 referer
-
-# ------------------------- 获取排名 --------------------------------------
+get_problem_params = json.loads(PTA_PROBLEM_PARAMS_JSON)
 
 get_rank_params = {
-    "page": 0,
-    "limit": 100
+    "page": PTA_RANK_PAGE,
+    "limit": PTA_RANK_LIMIT,
 }
 
-def get_rank_headers():
-    return get_base_headers("rankings")
 
 def get_pintia_submissions():
-    print("[get_pintia_submissions] 开始请求PTA提交记录接口...")
+    print("[get_pintia_submissions] Starting PTA submission fetch...")
     try:
         response = requests.get(
-            url=get_submit_url,
+            url=PTA_SUBMIT_URL,
             params=get_submit_params,
             headers=get_submit_headers(),
-            timeout=10,
-            allow_redirects=True
+            timeout=PTA_SUBMIT_TIMEOUT_SECONDS,
+            allow_redirects=PTA_ALLOW_REDIRECTS,
         )
-
-
         response.raise_for_status()
 
         data = response.json()
-        # 提交id（过滤重复数据），用户id，用户名，状态，问题id, 时间
-        submissionId, userId, status, problemId, judgeTime = [], [], [], [], []
-        for item in data["submissions"]:
-            submissionId.append(item["id"])
-            userId.append(item["userId"])
-            status.append(item["status"])
-            problemId.append(item["problemSetProblemId"])
-            judgeTime.append(item["submitAt"])
+        submission_id_list, user_id_list, status_list, problem_id_list, judge_time_list = [], [], [], [], []
+        for item in reversed(data["submissions"]):
+            submission_id_list.append(item["id"])
+            user_id_list.append(item["userId"])
+            status_list.append(item["status"])
+            problem_id_list.append(item["problemSetProblemId"])
+            judge_time_list.append(item["submitAt"])
 
-        cur_user_id, cur_user_name, cur_school_id = [], [], []
+        current_user_id_list, current_user_name_list, current_school_id_list = [], [], []
         student_users = data.get("studentUserById") or {}
-        for student_key, student_info in student_users.items():
+        for _, student_info in reversed(student_users.items()):
             if not student_info:
                 continue
-            student_number = student_info.get("studentNumber", "")
-            name = student_info.get("name", "")
-            student_id = student_info.get("id", "")
-            cur_user_id.append(student_id)
-            cur_user_name.append(name)
-            cur_school_id.append(student_number)
+            current_user_id_list.append(student_info.get("id", ""))
+            current_user_name_list.append(student_info.get("name", ""))
+            current_school_id_list.append(student_info.get("studentNumber", ""))
 
-        student_nick_id, student_real_id = [], []
-        ids = data.get("examMemberByUserId") or {}
-        for nick_id, nick_info in ids.items():
+        student_nick_id_list, student_real_id_list = [], []
+        exam_members = data.get("examMemberByUserId") or {}
+        for nick_id, nick_info in reversed(exam_members.items()):
             if not nick_info:
                 continue
-            student_nick_id.append(nick_id)
-            student_real_id.append(nick_info.get("studentUserId", ""))
+            student_nick_id_list.append(nick_id)
+            student_real_id_list.append(nick_info.get("studentUserId", ""))
 
-
-        return submissionId, userId, status, problemId, judgeTime, cur_user_id, cur_user_name, cur_school_id, student_nick_id, student_real_id
+        return (
+            submission_id_list,
+            user_id_list,
+            status_list,
+            problem_id_list,
+            judge_time_list,
+            current_user_id_list,
+            current_user_name_list,
+            current_school_id_list,
+            student_nick_id_list,
+            student_real_id_list,
+        )
 
     except requests.exceptions.Timeout:
-        print("[get_pintia_submissions] 错误：请求超时，请检查网络或重试")
+        print("[get_pintia_submissions] Timeout while requesting PTA submissions.")
     except requests.exceptions.ConnectionError:
-        print("[get_pintia_submissions] 错误：网络连接失败，请检查网络")
+        print("[get_pintia_submissions] Connection error while requesting PTA submissions.")
     except requests.exceptions.HTTPError as e:
-        print(f"[get_pintia_submissions] 错误：HTTP请求失败，状态码 {e.response.status_code}")
-        # 打印响应内容，便于排查问题（如未登录、权限不足）
-        print(f"[get_pintia_submissions] 响应内容：{e.response.text}")
+        print(f"[get_pintia_submissions] HTTP error: {e.response.status_code}")
+        print(f"[get_pintia_submissions] Response body: {e.response.text}")
     except json.JSONDecodeError:
-        print("[get_pintia_submissions] 错误：响应不是有效的JSON格式")
+        print("[get_pintia_submissions] Response body is not valid JSON.")
     except Exception as e:
-        print(f"[get_pintia_submissions] 未知错误：{str(e)}")
+        print(f"[get_pintia_submissions] Unexpected error: {e}")
 
     return None
 
 
 def get_problem_types():
-    """
-    发起GET请求获取拼题啦题库的题目类型数据
-    :return: dict/None  返回解析后的JSON数据（失败返回None）
-    """
-    print("[get_problem_types] 开始请求拼题啦题库类型数据接口...")
+    print("[get_problem_types] Starting PTA problem type fetch...")
     try:
-        # 发起GET请求（同步替换为新的变量名）
         response = requests.get(
-            url=get_problem_url,
+            url=PTA_PROBLEM_URL,
             params=get_problem_params,
             headers=get_problem_headers(),
-            timeout=15,  # 超时时间15秒
-            allow_redirects=True
+            timeout=PTA_PROBLEM_TIMEOUT_SECONDS,
+            allow_redirects=PTA_ALLOW_REDIRECTS,
         )
-
-        # 检查HTTP状态码（非200则抛出异常）
         response.raise_for_status()
 
-        # 解析JSON响应（转为Python字典）
         data = response.json()
-        problemId, label = [], []
+        problem_id_list, label_list = [], []
         for item in data["labels"]:
-            problemId.append(item["id"])
-            label.append(item["label"])
-        return problemId, label
+            problem_id_list.append(item["id"])
+            label_list.append(item["label"])
+        return problem_id_list, label_list
 
-    # 捕获常见异常
     except requests.exceptions.Timeout:
-        print("[get_problem_types] ❌ 错误：请求超时，请检查网络或重试")
+        print("[get_problem_types] Timeout while requesting PTA problem types.")
     except requests.exceptions.ConnectionError:
-        print("[get_problem_types] ❌ 错误：网络连接失败，请检查网络")
+        print("[get_problem_types] Connection error while requesting PTA problem types.")
     except requests.exceptions.HTTPError as e:
-        print(f"[get_problem_types] ❌ 错误：HTTP请求失败，状态码 {e.response.status_code}")
-        print(f"[get_problem_types] ❌ 响应内容：{e.response.text}")
+        print(f"[get_problem_types] HTTP error: {e.response.status_code}")
+        print(f"[get_problem_types] Response body: {e.response.text}")
     except json.JSONDecodeError:
-        print("[get_problem_types] ❌ 错误：响应不是有效的JSON格式")
+        print("[get_problem_types] Response body is not valid JSON.")
     except Exception as e:
-        print(f"[get_problem_types] ❌ 未知错误：{str(e)}")
+        print(f"[get_problem_types] Unexpected error: {e}")
 
     return None
+
 
 def get_common_rankings():
     try:
         response = requests.get(
-            url=get_rank_url,
+            url=PTA_RANK_URL,
             params=get_rank_params,
             headers=get_rank_headers(),
-            timeout=15
+            timeout=PTA_RANK_TIMEOUT_SECONDS,
+            allow_redirects=PTA_ALLOW_REDIRECTS,
         )
         response.raise_for_status()
+
         data = response.json()
         id_to_name = {}
         for item in data["studentUserById"]:
-            name = data["studentUserById"][item]["name"]
-            stu_id = data["studentUserById"][item]["id"]
-            stu_number = data["studentUserById"][item]["studentNumber"]
-            id_to_name.setdefault(stu_id, f"{name} {stu_number}")
+            student = data["studentUserById"][item]
+            id_to_name.setdefault(
+                student["id"],
+                f'{student["name"]} {student["studentNumber"]}',
+            )
 
         rank_to_name = {}
         for item in data["commonRankings"]:
-            rank = item["rank"]
-            stu_id = item["user"]["studentUserId"]
-            stu_name = id_to_name.get(stu_id)
-            rank_to_name.setdefault(rank, stu_name)
+            rank_to_name.setdefault(
+                item["rank"],
+                id_to_name.get(item["user"]["studentUserId"]),
+            )
 
         return rank_to_name
 
     except Exception as e:
-        print("❌ 请求失败：", str(e))
+        print(f"[get_common_rankings] Request failed: {e}")
         return None
