@@ -1,0 +1,15 @@
+[Unit]
+Description=ACM Board Backend
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+WorkingDirectory=/opt/acm_board_backend2
+EnvironmentFile=/opt/acm_board_backend2/.env
+ExecStart=/opt/acm_board_backend2/.venv/bin/uvicorn app:app --host 0.0.0.0 --port 8090
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

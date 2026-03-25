@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ACM 榜单管理 - 发送广播</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f5f7fa;
+            display: flex;
+            justify-content: center;
+            align-items: flex-start;
+            min-height: 100vh;
+            margin: 0;
+            padding: 30px 0;
+        }
+        .page {
+            width: 100%;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 20px;
+        }
+        .container {
+            background-color: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            width: 100%;
+            max-width: 400px;
+        }
+        h2 {
+            margin-top: 0;
+            color: #333;
+            text-align: center;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: bold;
+            color: #555;
+        }
+        input[type="text"], input[type="number"] {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            box-sizing: border-box;
+            font-size: 16px;
+        }
+        button {
+            width: 100%;
+            padding: 12px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        button.danger {
+            background-color: #dc3545;
+        }
+        button.danger:hover {
+            background-color: #c82333;
+        }
+        .message-area {
+            margin-top: 15px;
+            text-align: center;
+            padding: 10px;
+            border-radius: 4px;
+            display: none;
+        }
+        .warning-text {
+            color: #b02a37;
+            font-weight: bold;
+            margin: 0 0 12px 0;
+            text-align: center;
+        }
+        .confirm-box {
+            display: none;
+            margin-top: 12px;
+            border: 1px solid #f5c6cb;
+            background-color: #fff5f5;
+            border-radius: 6px;
+            padding: 12px;
+        }
+        .confirm-actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 12px;
+        }
+        .confirm-actions button {
+            width: 50%;
+        }
+        button.secondary {
+            background-color: #6c757d;
+        }
+        button.secondary:hover {
+            background-color: #5a6268;
+        }
+        .success {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .error {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+    </style>
+</head>
+<body>
+
+<div class="page">
+    <div class="container">
+        <h2>发送广播消息</h2>
+        <div class="form-group">
+            <label for="content">消息内容：</label>
+            <input type="text" id="content" placeholder="输入要广播的消息..." required>
+        </div>
+        <div class="form-group">
+            <label for="duration">显示时长 (毫秒)：</label>
+            <input type="number" id="duration" value="5000" min="1000" required>
+        </div>
+        <button onclick="sendMessage()">发送</button>
+
+        <div id="broadcast-message-area" class="message-area"></div>
+    </div>
+
+    <div class="container">
+        <h2>数据库维护</h2>
+        <p class="warning-text">危险操作：清空数据库后无法恢复</p>
+        <button class="danger" onclick="openClearConfirm()">清空数据库</button>
+
+        <div id="clear-confirm-box" class="confirm-box">
+            <div>确定要清空数据库吗？此操作不可恢复。</div>
+            <div class="confirm-actions">
+                <button class="danger" id="confirm-clear-btn" onclick="confirmClearDatabase()">确定清空</button>
+                <button class="secondary" onclick="cancelClearConfirm()">取消</button>
+            </div>
+        </div>
+
+        <div id="db-message-area" class="message-area"></div>
+    </div>
+</div>
+
+<script>
+    async function sendMessage() {
+        const content = document.getElementById('content').value;
+        const duration = document.getElementById('duration').value;
+
+        if (!content) {
+            showMessage('broadcast-message-area', '请输入消息内容！', 'error');
+            return;
+        }
+
+        try {
+            const response = await fetch(`/api/send_message?content=${encodeURIComponent(content)}&duration=${duration}`, {
+                method: 'GET'
+            });
+
+            if (response.ok) {
+                const result = await response.json();
+                showMessage('broadcast-message-area', '消息发送成功！', 'success');
+                document.getElementById('content').value = ''; // 清空输入框
+            } else {
+                showMessage('broadcast-message-area', '发送失败，状态码: ' + response.status, 'error');
+            }
+        } catch (error) {
+            showMessage('broadcast-message-area', '请求失败: ' + error.message, 'error');
+        }
+    }
+
+    function openClearConfirm() {
+        const box = document.getElementById('clear-confirm-box');
+        box.style.display = 'block';
+        hideMessage('db-message-area');
+    }
+
+    function cancelClearConfirm() {
+        const box = document.getElementById('clear-confirm-box');
+        box.style.display = 'none';
+    }
+
+    async function confirmClearDatabase() {
+        const confirmBtn = document.getElementById('confirm-clear-btn');
+        confirmBtn.disabled = true;
+        confirmBtn.textContent = '清空中...';
+        try {
+            const response = await fetch('/api/clear_db', {
+                method: 'POST'
+            });
+
+            if (response.ok) {
+                showMessage('db-message-area', '数据库已清空！', 'success');
+                cancelClearConfirm();
+            } else {
+                const result = await response.json().catch(() => null);
+                const detail = result && result.detail ? result.detail : '未知错误';
+                showMessage('db-message-area', '清空失败：' + detail, 'error');
+            }
+        } catch (error) {
+            showMessage('db-message-area', '请求失败: ' + error.message, 'error');
+        } finally {
+            confirmBtn.disabled = false;
+            confirmBtn.textContent = '确定清空';
+        }
+    }
+
+    function hideMessage(targetId) {
+        const messageArea = document.getElementById(targetId);
+        messageArea.style.display = 'none';
+    }
+
+    function showMessage(targetId, msg, type) {
+        const messageArea = document.getElementById(targetId);
+        messageArea.textContent = msg;
+        messageArea.className = `message-area ${type}`;
+        messageArea.style.display = 'block';
+        
+        // 3秒后隐藏提示
+        setTimeout(() => {
+            messageArea.style.display = 'none';
+        }, 3000);
+    }
+</script>
+
+</body>
+</html>
