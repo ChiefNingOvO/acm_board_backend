@@ -212,11 +212,13 @@ def get_common_rankings():
             )
 
         rank_to_name = {}
+        rank = 1
         for item in data["commonRankings"]:
             rank_to_name.setdefault(
-                item["rank"],
+                rank,
                 id_to_name.get(item["user"]["studentUserId"]),
             )
+            rank += 1
 
         return rank_to_name
 
