@@ -22,7 +22,7 @@ def migrate():
 
     cursor.execute('''CREATE TABLE IF NOT EXISTS submissions (submission_id TEXT PRIMARY KEY)''')
     cursor.execute('''CREATE TABLE IF NOT EXISTS student_passed_problems (user_id TEXT, status TEXT, problem_id TEXT, PRIMARY KEY (user_id, problem_id))''')
-    cursor.execute('''CREATE TABLE IF NOT EXISTS first_blood (problem_id TEXT PRIMARY KEY, user_id TEXT)''')
+    cursor.execute('''CREATE TABLE IF NOT EXISTS first_blood (problem_id TEXT PRIMARY KEY, user_id TEXT, judge_time TEXT)''')
     cursor.execute('''CREATE TABLE IF NOT EXISTS problem_label (problem_id TEXT PRIMARY KEY, label TEXT)''')
     cursor.execute('''CREATE TABLE IF NOT EXISTS user_info (user_id TEXT PRIMARY KEY, user_name TEXT, school_id TEXT)''')
     cursor.execute('''CREATE TABLE IF NOT EXISTS id_info (nick TEXT PRIMARY KEY, real TEXT)''')
@@ -43,7 +43,10 @@ def migrate():
         with open(USER_PROBLEM_CSV, "r", encoding="utf-8") as f:
             reader = csv.DictReader(f)
             for row in reader:
-                cursor.execute("INSERT OR IGNORE INTO first_blood (problem_id, user_id) VALUES (?, ?)", (row["problemId"], row["userId"]))
+                cursor.execute(
+                    "INSERT OR IGNORE INTO first_blood (problem_id, user_id, judge_time) VALUES (?, ?, ?)",
+                    (row["problemId"], row["userId"], row.get("judge_time")),
+                )
 
     if PROBLEM_LABEL_CSV.exists():
         with open(PROBLEM_LABEL_CSV, "r", encoding="utf-8") as f:

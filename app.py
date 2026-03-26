@@ -4,6 +4,7 @@ import os
 import json
 import time
 from pathlib import Path
+from datetime import datetime
 from fastapi import FastAPI, HTTPException
 from contextlib import asynccontextmanager, suppress
 import uvicorn
@@ -56,8 +57,15 @@ submissionId_set = set()
 student_passed_problems = {}
 
 # 首刀记录，默认题号 A-L，-1 表示无人通过
+def build_empty_first_blood_record():
+    return {
+        "user_id": FIRST_BLOOD_EMPTY_VALUE,
+        "judge_time": None,
+    }
+
+
 def build_default_first_blood():
-    return {problem_id: FIRST_BLOOD_EMPTY_VALUE for problem_id in FIRST_BLOOD_PROBLEM_IDS}
+    return {problem_id: build_empty_first_blood_record() for problem_id in FIRST_BLOOD_PROBLEM_IDS}
 
 
 first_blood = build_default_first_blood()
@@ -166,6 +174,39 @@ def sync_latest_submissions_to_kafka():
     return published_count
 
 
+def parse_judge_time(judge_time: str | None):
+    if not judge_time:
+        return None
+
+    try:
+        return datetime.fromisoformat(judge_time.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def should_update_first_blood(saved_record: dict, current_judge_time: str):
+    if not isinstance(saved_record, dict):
+        saved_record = {
+            "user_id": saved_record,
+            "judge_time": None,
+        }
+
+    if saved_record.get("user_id") == FIRST_BLOOD_EMPTY_VALUE:
+        return True
+
+    saved_judge_time = saved_record.get("judge_time")
+    if not saved_judge_time:
+        return False
+
+    current_dt = parse_judge_time(current_judge_time)
+    saved_dt = parse_judge_time(saved_judge_time)
+
+    if current_dt is not None and saved_dt is not None:
+        return current_dt < saved_dt
+
+    return current_judge_time < saved_judge_time
+
+
 async def submission_poller_loop():
     while True:
         try:
@@ -181,10 +222,13 @@ def init_db():
     cursor = conn.cursor()
     cursor.execute('''CREATE TABLE IF NOT EXISTS submissions (submission_id TEXT PRIMARY KEY)''')
     cursor.execute('''CREATE TABLE IF NOT EXISTS student_passed_problems (user_id TEXT, status TEXT, problem_id TEXT, PRIMARY KEY (user_id, problem_id))''')
-    cursor.execute('''CREATE TABLE IF NOT EXISTS first_blood (problem_id TEXT PRIMARY KEY, user_id TEXT)''')
+    cursor.execute('''CREATE TABLE IF NOT EXISTS first_blood (problem_id TEXT PRIMARY KEY, user_id TEXT, judge_time TEXT)''')
     cursor.execute('''CREATE TABLE IF NOT EXISTS problem_label (problem_id TEXT PRIMARY KEY, label TEXT)''')
     cursor.execute('''CREATE TABLE IF NOT EXISTS user_info (user_id TEXT PRIMARY KEY, user_name TEXT, school_id TEXT)''')
     cursor.execute('''CREATE TABLE IF NOT EXISTS id_info (nick TEXT PRIMARY KEY, real TEXT)''')
+    first_blood_columns = {row[1] for row in cursor.execute("PRAGMA table_info(first_blood)").fetchall()}
+    if "judge_time" not in first_blood_columns:
+        cursor.execute("ALTER TABLE first_blood ADD COLUMN judge_time TEXT")
     conn.commit()
     conn.close()
 
@@ -250,11 +294,15 @@ def init_data():
 
     # 3. 初始化并读取首刀记录
     try:
-        cursor.execute("SELECT problem_id, user_id FROM first_blood")
+        cursor.execute("SELECT problem_id, user_id, judge_time FROM first_blood")
         for row in cursor.fetchall():
             problem_id = row["problem_id"].strip()
             user_id = row["user_id"].strip()
-            first_blood[problem_id] = user_id
+            judge_time = row["judge_time"]
+            first_blood[problem_id] = {
+                "user_id": user_id,
+                "judge_time": judge_time.strip() if isinstance(judge_time, str) else judge_time,
+            }
     except Exception as e:
         print(f"[init_data] 读取首刀记录 DB 失败：{e}")
 
@@ -378,12 +426,20 @@ def handle_first_blood(user_id: str, problem_id: str, judge_time: str):
     user_id_str = f"{user_name} {school_id}"
 
     # 逻辑修复：如果该题目前没有人 AC（值为 "-1"），则当前用户夺得首刀
-    if first_blood.get(problem_id_label) == FIRST_BLOOD_EMPTY_VALUE:
-        first_blood[problem_id_label] = user_id_str
+    saved_record = first_blood.get(problem_id_label, build_empty_first_blood_record())
+
+    if should_update_first_blood(saved_record, judge_time):
+        first_blood[problem_id_label] = {
+            "user_id": user_id_str,
+            "judge_time": judge_time,
+        }
         
         conn = get_db_connection()
         try:
-            conn.execute("INSERT OR REPLACE INTO first_blood (problem_id, user_id) VALUES (?, ?)", (problem_id_label, user_id_str))
+            conn.execute(
+                "INSERT OR REPLACE INTO first_blood (problem_id, user_id, judge_time) VALUES (?, ?, ?)",
+                (problem_id_label, user_id_str, judge_time),
+            )
             conn.commit()
         except Exception as e:
             print(f"[handle_first_blood] 写入 first_blood 失败: {e}")
@@ -538,9 +594,11 @@ def get_first_blood_list():
     result = []
 
     for problem_id in sorted(first_blood.keys()):
+        record = first_blood[problem_id]
         result.append({
             "problem_id": problem_id,
-            "user_id": first_blood[problem_id],
+            "user_id": record["user_id"],
+            "judge_time": record["judge_time"],
         })
 
     return result
