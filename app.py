@@ -55,6 +55,7 @@ submissionId_set = set()
 
 # 学生通过题号集合，格式: {userId: set(problemId)}
 student_passed_problems = {}
+accepted_submission_count = 0
 
 # 首刀记录，默认题号 A-L，-1 表示无人通过
 def build_empty_first_blood_record():
@@ -88,10 +89,11 @@ submission_event_producer = None
 submission_poller_task = None
 
 def reset_runtime_state():
-    global submissionId_set, student_passed_problems, first_blood, problem_label, user_info, id_info, message_queue, broadcast_queue
+    global submissionId_set, student_passed_problems, accepted_submission_count, first_blood, problem_label, user_info, id_info, message_queue, broadcast_queue
 
     submissionId_set = set()
     student_passed_problems = {}
+    accepted_submission_count = 0
     first_blood = build_default_first_blood()
     problem_label = {}
     user_info = {}
@@ -222,6 +224,7 @@ def init_db():
     cursor = conn.cursor()
     cursor.execute('''CREATE TABLE IF NOT EXISTS submissions (submission_id TEXT PRIMARY KEY)''')
     cursor.execute('''CREATE TABLE IF NOT EXISTS student_passed_problems (user_id TEXT, status TEXT, problem_id TEXT, PRIMARY KEY (user_id, problem_id))''')
+    cursor.execute('''CREATE TABLE IF NOT EXISTS accepted_submissions (submission_id TEXT PRIMARY KEY)''')
     cursor.execute('''CREATE TABLE IF NOT EXISTS first_blood (problem_id TEXT PRIMARY KEY, user_id TEXT, judge_time TEXT)''')
     cursor.execute('''CREATE TABLE IF NOT EXISTS problem_label (problem_id TEXT PRIMARY KEY, label TEXT)''')
     cursor.execute('''CREATE TABLE IF NOT EXISTS user_info (user_id TEXT PRIMARY KEY, user_name TEXT, school_id TEXT)''')
@@ -262,7 +265,7 @@ def init_data():
     初始化所有数据：检查文件，若存在则读取历史数据加载到内存中。
     """
     print("[init_data] 开始执行初始化数据操作...")
-    global submissionId_set, student_passed_problems, first_blood, problem_label, user_info, id_info
+    global submissionId_set, student_passed_problems, accepted_submission_count, first_blood, problem_label, user_info, id_info
 
     init_db()
     conn = get_db_connection()
@@ -292,7 +295,15 @@ def init_data():
     except Exception as e:
         print(f"[init_data] 读取学生AC记录 DB 失败：{e}")
 
-    # 3. 初始化并读取首刀记录
+    # 3. 初始化并读取所有AC提交次数
+    try:
+        cursor.execute("SELECT COUNT(*) AS accepted_count FROM accepted_submissions")
+        row = cursor.fetchone()
+        accepted_submission_count = int(row["accepted_count"]) if row else 0
+    except Exception as e:
+        print(f"[init_data] 读取 accepted_submissions 失败：{e}")
+
+    # 4. 初始化并读取首刀记录
     try:
         cursor.execute("SELECT problem_id, user_id, judge_time FROM first_blood")
         for row in cursor.fetchall():
@@ -306,7 +317,7 @@ def init_data():
     except Exception as e:
         print(f"[init_data] 读取首刀记录 DB 失败：{e}")
 
-    # 4. 初始化题目与标签
+    # 5. 初始化题目与标签
     try:
         cursor.execute("SELECT problem_id, label FROM problem_label")
         rows = cursor.fetchall()
@@ -331,7 +342,7 @@ def init_data():
     except Exception as e:
         print(f"[init_data] 读取题目标签记录 DB 失败：{e}")
 
-    # 5. 初始化并读取用户信息
+    # 6. 初始化并读取用户信息
     try:
         cursor.execute("SELECT user_id, user_name, school_id FROM user_info")
         for row in cursor.fetchall():
@@ -343,7 +354,7 @@ def init_data():
     except Exception as e:
         print(f"[init_data] 读取用户信息记录 DB 失败：{e}")
 
-    # 6. 初始化映射文件
+    # 7. 初始化映射文件
     try:
         cursor.execute("SELECT nick, real FROM id_info")
         for row in cursor.fetchall():
@@ -366,7 +377,7 @@ def filter_data(submission_ids: list, user_ids: list, statuses: list, problem_id
             new_submissions.append((sub_id,))
             
             # 处理业务逻辑
-            handle_data(user_id, status, prob_id, judge_time)
+            handle_data(sub_id, user_id, status, prob_id, judge_time)
             
     print(f"[filter_data] 新提交记录数: {len(new_submissions)}")
 
@@ -381,16 +392,29 @@ def filter_data(submission_ids: list, user_ids: list, statuses: list, problem_id
             conn.close()
 
 
-def handle_data(user_id: str, status: str, problem_id: str, judge_time: str):
+def handle_data(submission_id: str, user_id: str, status: str, problem_id: str, judge_time: str):
     """
     处理单条提交数据，根据状态和题目记录AC情况及首刀情况
     """
-    print(f"[handle_data] 处理用户 {user_id} 提交的题目 {problem_id}，状态: {status}")
+    global accepted_submission_count
+
+    print(f"[handle_data] 处理提交 {submission_id}，用户 {user_id} 的题目 {problem_id}，状态: {status}")
     if user_id not in student_passed_problems:
         student_passed_problems[user_id] = set()
 
     # 只有"通过"且"题目未在已通过列表中"时才进行记录
     if status == "ACCEPTED":
+        conn = get_db_connection()
+        try:
+            cursor = conn.execute("INSERT OR IGNORE INTO accepted_submissions (submission_id) VALUES (?)", (submission_id,))
+            conn.commit()
+            if cursor.rowcount == 1:
+                accepted_submission_count += 1
+        except Exception as e:
+            print(f"[handle_data] 写入 accepted_submissions 失败: {e}")
+        finally:
+            conn.close()
+
         if problem_id not in student_passed_problems[user_id]:
             student_passed_problems[user_id].add(problem_id)
             
@@ -602,6 +626,14 @@ def get_first_blood_list():
         })
 
     return result
+
+
+@app.get("/api/get_submission_stats")
+def get_submission_stats():
+    return {
+        "total_submissions": len(submissionId_set),
+        "accepted_submissions": accepted_submission_count,
+    }
 
 @app.get("/api/send_message")
 def send_message_api(content: str, duration: int):
