@@ -104,7 +104,7 @@ def get_pintia_submissions():
         submission_id_list, user_id_list, status_list, problem_id_list, judge_time_list = [], [], [], [], []
         for item in reversed(data["submissions"]):
             # 如果是判题中，跳过
-            if item["status"] == "JUDGING":
+            if item["status"] == "JUDGING" or item["status"] == "WAITING":
                 continue
             submission_id_list.append(item["id"])
             user_id_list.append(item["userId"])
