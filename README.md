@@ -51,13 +51,7 @@
 ### 1. 安装依赖
 
 ```bash
-pip install -e .
-```
-
-如果你不用 editable 安装，也可以直接：
-
-```bash
-pip install fastapi kafka-python requests "uvicorn[standard]" python-dotenv
+uv sync
 ```
 
 ### 2. 配置环境变量
@@ -89,6 +83,7 @@ python app.py
 ```
 
 ### 4. 访问管理页
+注意：每次比赛之前，必须先清空数据库，否则前端展示会出现显示问题，您可以直接运行`python clear_db.py`或者在管理页点击“清空数据库”按钮。
 
 默认管理页地址：
 
@@ -261,7 +256,7 @@ http://127.0.0.1:8090/admin
 
 ### 服务器配置
 
-这个项目本身比较轻量，常规 `2C2G` 云服务器通常可以部署和运行，但前提是：
+这个项目本身比较轻量，常规 `2C2G` 云服务器通常可以部署和运行（实践：500人比赛，5000提交量，100提交/秒，完全能撑住！），但前提是：
 
 - PTA 接口可访问
 - Kafka broker 可访问
@@ -298,8 +293,6 @@ SQLite 中会保存以下数据：
 
 ## 注意事项
 
-- `.env` 中包含 PTA 和 Kafka 的敏感配置，上传 GitHub 前不要提交真实 `.env`
-- 建议将数据库文件和日志文件加入忽略列表
 - 如果 Kafka 报 `NoBrokersAvailable`，优先检查网络连通性和 `advertised.listeners`
 - 如果 PTA 接口请求失败，优先检查 Cookie 和请求头是否过期
 
@@ -310,6 +303,12 @@ SQLite 中会保存以下数据：
 - 增加结构化日志和监控
 - 为排行榜和公告消费端补充更明确的协议文档
 
+## Community
+
+- [MIT License](LICENSE)
+- [Contributing Guide](CONTRIBUTING.md)
+- [Open Source Checklist](OPEN_SOURCE_CHECKLIST.md)
+
 ## License
 
-如果你准备开源，建议补一个明确的许可证，例如 `MIT`。
+本项目使用 `MIT` 许可证。
