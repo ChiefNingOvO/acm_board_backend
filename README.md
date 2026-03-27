@@ -1,5 +1,12 @@
 # ACM Board Backend
 
+![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-0.135%2B-009688?logo=fastapi&logoColor=white)
+![Kafka](https://img.shields.io/badge/Kafka-Event%20Driven-231F20?logo=apachekafka&logoColor=white)
+![SQLite](https://img.shields.io/badge/SQLite-Local%20Storage-003B57?logo=sqlite&logoColor=white)
+![License](https://img.shields.io/badge/License-MIT-yellow.svg)
+![Status](https://img.shields.io/badge/Status-Active-success)
+
 一个面向 ACM/算法竞赛榜单展示场景的轻量级后端服务。
 
 它会定时从 PTA/Pintia 拉取最新提交记录，做本地去重、首刀统计、用户信息映射，并把提交事件和公告事件投递到 Kafka；同时提供排行榜、首刀列表、统计信息和管理接口，方便前端展示和运维。
