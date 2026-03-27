@@ -303,13 +303,6 @@ SQLite 中会保存以下数据：
 - 如果 Kafka 报 `NoBrokersAvailable`，优先检查网络连通性和 `advertised.listeners`
 - 如果 PTA 接口请求失败，优先检查 Cookie 和请求头是否过期
 
-## 后续可改进方向
-
-- 补充测试用例和 CI
-- 将业务逻辑从 `app.py` 中拆分为模块
-- 增加结构化日志和监控
-- 为排行榜和公告消费端补充更明确的协议文档
-
 ## Community
 
 - [MIT License](LICENSE)
